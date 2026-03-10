@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
-  base: '/Teranova/',
+  base: './',
   plugins: [vue()],
   server: {
     host: true,
@@ -11,5 +11,11 @@ export default defineConfig({
     watch: {
       usePolling: true,
     },
+  },
+  build: {
+    sourcemap: false,
+    target: 'es2018',
+    cssCodeSplit: true,
+    assetsInlineLimit: 4096,
   },
 })
