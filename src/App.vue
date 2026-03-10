@@ -7,7 +7,7 @@ function startGame() {
 <template>
   <div class="app">
     <div class="title">
-      Teranova
+      Teranova (테라노바. 새로운 땅)
     </div>
 
     <div class="story">
