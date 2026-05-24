@@ -68,8 +68,13 @@ const text = 'TERANOVE 세계 접속 준비 완료.'
 const typedText = ref('')
 let index = 0
 
-function login() {
-  signInWithPopup(auth, googleProvider)
+async function login() {
+  try {
+    await signInWithPopup(auth, googleProvider)
+  } catch (error) {
+    console.error(error)
+    alert(error.code || error.message || '로그인 실패')
+  }
 }
 
 function logoutUser() {
