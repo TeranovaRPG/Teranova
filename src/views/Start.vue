@@ -1,216 +1,202 @@
 <template>
   <div class="start">
     <div class="overlay"></div>
-    <div class="vignette"></div>
 
-    <div class="content">
+    <main class="content">
+      <h1 class="title">TERANOVE</h1>
 
-      <div class="logoWrap">
-        <h1 class="title">TERANOVA</h1>
-        <div class="titleLine"></div>
-      </div>
-
-      <button class="startButton" @click="startGame">
-        START
-      </button>
-
-      <p class="systemText">
-        {{ typedText }}<span class="cursor">|</span>
+      <p class="subtitle">
+        사람을 키우고, 도시를 만들고, 세계로 배출하세요.
       </p>
 
-    </div>
+      <div class="menu">
+        <button class="mainButton" @click="startGame">
+          GAME START
+        </button>
+
+        <button class="subButton" @click="continueGame">
+          CONTINUE
+        </button>
+      </div>
+
+      <p class="systemText">
+        {{ typedText }}
+        <span class="cursor">|</span>
+      </p>
+    </main>
   </div>
 </template>
 
 <script setup>
-
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { STORAGE_KEY } from '../data/gameDefaults'
 
 const router = useRouter()
 
-function startGame(){
+const text = 'TERANOVE 세계 접속 준비 완료.'
+const typedText = ref('')
+let index = 0
+
+function startGame() {
   router.push('/home')
 }
 
-/* 타이핑 문구 */
+function continueGame() {
+  const saved = localStorage.getItem(STORAGE_KEY)
 
-const text = "도시 기능 손상. 관리자 대기중..."
-
-const typedText = ref("")
-let index = 0
-
-function typeEffect(){
-
-  if(index < text.length){
-
-    typedText.value += text[index]
-    index++
-
-    setTimeout(typeEffect,40)
-
+  if (!saved) {
+    router.push('/home')
+    return
   }
 
+  router.push('/play')
 }
 
-onMounted(()=>{
+function typeEffect() {
+  if (index < text.length) {
+    typedText.value += text[index]
+    index += 1
+    setTimeout(typeEffect, 45)
+  }
+}
+
+onMounted(() => {
   typeEffect()
 })
-
 </script>
 
 <style scoped>
+.start {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
 
-.start{
+  background-image: url('/start-bg.png');
+  background-size: cover;
+  background-position: center;
 
-  position:relative;
-  min-height:100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 
-  background-image:url("/start-bg.png");
-  background-size:cover;
-  background-position:center;
-  background-repeat:no-repeat;
-
-  display:flex;
-  justify-content:center;
-  align-items:center;
-
+  color: #f5f7fa;
 }
 
-.overlay{
-
-  position:absolute;
-  inset:0;
-
+.overlay {
+  position: absolute;
+  inset: 0;
   background:
-  linear-gradient(
-  to bottom,
-  rgba(6,10,18,0.42),
-  rgba(8,12,20,0.75)
-  );
-
+    linear-gradient(
+      to bottom,
+      rgba(4, 8, 16, 0.46),
+      rgba(5, 8, 14, 0.88)
+    );
 }
 
-.vignette{
+.content {
+  position: relative;
+  z-index: 1;
 
-  position:absolute;
-  inset:0;
+  width: min(92vw, 720px);
+  padding: 40px 24px;
 
-  background:
-  radial-gradient(
-  circle at center,
-  rgba(0,0,0,0) 40%,
-  rgba(0,0,0,0.5) 100%
-  );
-
+  text-align: center;
 }
 
-.content{
+.title {
+  margin: 0;
+  font-size: clamp(52px, 10vw, 96px);
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
 
-  position:relative;
-  text-align:center;
-
-}
-
-.logoWrap{
-
-  margin-bottom:40px;
-
-}
-
-.title{
-
-  margin:0;
-
-  font-size:90px;
-
-  letter-spacing:0.22em;
-  text-indent:0.22em;
-
-  color:#f5f7fa;
+  color: #f8fbff;
 
   text-shadow:
-  0 0 12px rgba(180,220,255,0.2),
-  0 6px 18px rgba(0,0,0,0.6);
-
+    0 0 18px rgba(157, 198, 255, 0.18),
+    0 8px 24px rgba(0, 0, 0, 0.75);
 }
 
-.titleLine{
+.subtitle {
+  margin: 20px 0 46px;
+  color: #d8e0ea;
+  font-size: 17px;
+  letter-spacing: 0.08em;
+  line-height: 1.7;
+}
 
-  width:300px;
-  height:2px;
+.menu {
+  width: min(360px, 100%);
+  margin: 0 auto;
 
-  margin:15px auto;
+  display: grid;
+  gap: 14px;
+}
 
+.mainButton,
+.subButton {
+  width: 100%;
+  padding: 18px 20px;
+
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: white;
+
+  cursor: pointer;
+  transition: 0.2s;
+  backdrop-filter: blur(10px);
+}
+
+.mainButton {
   background:
-  linear-gradient(
-  to right,
-  transparent,
-  #9dc6ff,
-  transparent
-  );
+    linear-gradient(
+      to bottom,
+      rgba(63, 123, 216, 0.9),
+      rgba(36, 74, 134, 0.9)
+    );
 
+  font-size: 18px;
+  letter-spacing: 0.18em;
+  font-weight: 700;
 }
 
-.startButton{
-
-  margin-top:20px;
-
-  padding:16px 50px;
-
-  font-size:18px;
-
-  letter-spacing:0.3em;
-
-  background:
-  linear-gradient(
-  to bottom,
-  #3f7bd8,
-  #244a86
-  );
-
-  border:1px solid rgba(255,255,255,0.2);
-
-  color:white;
-
-  cursor:pointer;
-
-  transition:0.2s;
-
+.subButton {
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 15px;
+  letter-spacing: 0.16em;
 }
 
-.startButton:hover{
-
-  transform:translateY(-2px);
-
+.mainButton:hover,
+.subButton:hover {
+  transform: translateY(-2px);
+  border-color: rgba(157, 198, 255, 0.7);
 }
 
-.systemText{
+.systemText {
+  margin-top: 34px;
+  min-height: 24px;
 
-  margin-top:35px;
-
-  font-size:16px;
-
-  color:#cfd6de;
-
-  letter-spacing:0.08em;
-
-  opacity:0.9;
-
+  color: #cfd6de;
+  font-size: 14px;
+  letter-spacing: 0.08em;
 }
 
-.cursor{
-
-  animation:blink 1s infinite;
-
+.cursor {
+  animation: blink 1s infinite;
 }
 
-@keyframes blink{
-
-  0%{opacity:0}
-  50%{opacity:1}
-  100%{opacity:0}
-
+@keyframes blink {
+  0% { opacity: 0; }
+  50% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
+@media (max-width: 640px) {
+  .title {
+    font-size: 54px;
+  }
+
+  .subtitle {
+    font-size: 15px;
+  }
+}
 </style>

@@ -2,135 +2,86 @@
   <div class="home">
     <div class="overlay"></div>
 
-    <div class="container">
-      <h1 class="title">TERANOVA</h1>
+    <main class="panel">
+      <header class="header">
+        <p class="eyebrow">WORLD SETUP</p>
 
-      <p class="statusText">메타버스 진입 완료.</p>
-      <p class="missionText">최초 임무 대기중</p>
+        <h1 class="title">
+          어떤 방식으로 시작할까요?
+        </h1>
 
-      <div class="missionList">
-        <button class="missionCard" @click="toggleMission(0)">
-          <span class="missionLabel">최초 임무 01</span>
-          <strong class="missionTitle">환경 스캔</strong>
-          <span class="missionTime">
-            남은 시간 : {{ formatTime(missions[0].timeLeft) }}
-          </span>
-          <span class="missionState">
-            {{ getMissionStateText(missions[0]) }}
-          </span>
+        <p class="desc">
+          TERANOVE는 정해진 스토리를 따라가는 게임이 아닙니다.
+          사람을 영입하고, 성장시키고, 세계로 배출하며
+          자신만의 도시 흐름을 만들어갑니다.
+        </p>
+      </header>
+
+      <section class="infoGrid">
+        <article class="infoCard">
+          <strong>자동 세계</strong>
+          <p>
+            NPC는 임무와 관계를 통해 자동으로 성장합니다.
+            플레이어는 원하는 만큼만 개입하면 됩니다.
+          </p>
+        </article>
+
+        <article class="infoCard">
+          <strong>도시 영향력</strong>
+          <p>
+            성장한 NPC를 세계로 배출하면 해당 분야 영향력이 증가합니다.
+          </p>
+        </article>
+
+        <article class="infoCard">
+          <strong>중형 해금</strong>
+          <p>
+            소형 임무 50회 완료 시 커스텀 임무와 더 넓은 운영이 열립니다.
+          </p>
+        </article>
+      </section>
+
+      <div class="actions">
+        <button class="mainButton" @click="goCreate">
+          새 도시 만들기
         </button>
 
-        <button class="missionCard" @click="toggleMission(1)">
-          <span class="missionLabel">최초 임무 02</span>
-          <strong class="missionTitle">기초 연결 확인</strong>
-          <span class="missionTime">
-            남은 시간 : {{ formatTime(missions[1].timeLeft) }}
-          </span>
-          <span class="missionState">
-            {{ getMissionStateText(missions[1]) }}
-          </span>
+        <button class="subButton" @click="continueGame">
+          이어하기
+        </button>
+
+        <button class="backButton" @click="goBack">
+          시작 화면으로
         </button>
       </div>
-    </div>
+    </main>
   </div>
 </template>
 
 <script setup>
-import { reactive, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
+import { STORAGE_KEY } from '../data/gameDefaults'
 
-const missions = reactive([
-  {
-    id: 1,
-    title: '환경 스캔',
-    duration: 120,
-    timeLeft: 120,
-    isRunning: false,
-    isCompleted: false,
-    intervalId: null,
-  },
-  {
-    id: 2,
-    title: '기초 연결 확인',
-    duration: 120,
-    timeLeft: 120,
-    isRunning: false,
-    isCompleted: false,
-    intervalId: null,
-  },
-])
+const router = useRouter()
 
-function toggleMission(index) {
-  const mission = missions[index]
+function goCreate() {
+  router.push('/character-create')
+}
 
-  if (mission.isCompleted) {
+function continueGame() {
+  const saved = localStorage.getItem(STORAGE_KEY)
+
+  if (!saved) {
+    router.push('/character-create')
     return
   }
 
-  if (mission.isRunning) {
-    stopMission(mission)
-    return
-  }
-
-  startMission(mission)
+  router.push('/play')
 }
 
-function startMission(mission) {
-  if (mission.isCompleted || mission.isRunning) {
-    return
-  }
-
-  mission.isRunning = true
-
-  mission.intervalId = setInterval(() => {
-    if (mission.timeLeft > 0) {
-      mission.timeLeft -= 1
-    }
-
-    if (mission.timeLeft <= 0) {
-      mission.timeLeft = 0
-      mission.isRunning = false
-      mission.isCompleted = true
-
-      clearInterval(mission.intervalId)
-      mission.intervalId = null
-    }
-  }, 1000)
+function goBack() {
+  router.push('/')
 }
-
-function stopMission(mission) {
-  mission.isRunning = false
-
-  clearInterval(mission.intervalId)
-  mission.intervalId = null
-}
-
-function formatTime(seconds) {
-  const minutes = Math.floor(seconds / 60)
-  const remainSeconds = seconds % 60
-
-  return `${String(minutes).padStart(2, '0')}:${String(remainSeconds).padStart(2, '0')}`
-}
-
-function getMissionStateText(mission) {
-  if (mission.isCompleted) {
-    return '완료'
-  }
-
-  if (mission.isRunning) {
-    return '진행중'
-  }
-
-  return '대기중'
-}
-
-onBeforeUnmount(() => {
-  missions.forEach((mission) => {
-    if (mission.intervalId) {
-      clearInterval(mission.intervalId)
-      mission.intervalId = null
-    }
-  })
-})
 </script>
 
 <style scoped>
@@ -139,154 +90,143 @@ onBeforeUnmount(() => {
   min-height: 100vh;
   overflow: hidden;
 
-  background-image: url("/start-bg.png");
+  background-image: url('/start-bg.png');
   background-size: cover;
   background-position: center;
-  background-repeat: no-repeat;
 
   display: flex;
   justify-content: center;
   align-items: center;
+
+  color: #f5f7fa;
 }
 
 .overlay {
   position: absolute;
   inset: 0;
-  background: rgba(6, 10, 18, 0.76);
+
+  background:
+    linear-gradient(
+      to bottom,
+      rgba(4, 8, 16, 0.58),
+      rgba(5, 8, 14, 0.94)
+    );
 }
 
-.container {
+.panel {
   position: relative;
   z-index: 1;
-  width: 100%;
-  max-width: 860px;
-  padding: 40px 24px;
+
+  width: min(92vw, 900px);
+  padding: 42px 28px;
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 14, 24, 0.54);
+  backdrop-filter: blur(16px);
+
   text-align: center;
+
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.35),
+    0 0 30px rgba(80, 140, 255, 0.08);
+}
+
+.header {
+  margin-bottom: 30px;
+}
+
+.eyebrow {
+  margin: 0 0 14px;
+  color: #9dc6ff;
+  font-size: 12px;
+  letter-spacing: 0.28em;
 }
 
 .title {
-  margin: 0 0 24px;
-  color: #f4f7fb;
-  font-size: clamp(46px, 8vw, 92px);
-  font-weight: 800;
-  letter-spacing: 0.2em;
-  text-indent: 0.2em;
-  text-transform: uppercase;
-  text-shadow:
-    0 0 12px rgba(180, 220, 255, 0.12),
-    0 3px 12px rgba(0, 0, 0, 0.5),
-    0 10px 36px rgba(0, 0, 0, 0.45);
+  margin: 0 0 18px;
+  font-size: clamp(30px, 5vw, 48px);
+  letter-spacing: 0.04em;
 }
 
-.statusText {
-  margin: 0 0 10px;
-  color: #d7e4f1;
-  font-size: 18px;
-  letter-spacing: 0.08em;
+.desc {
+  max-width: 660px;
+  margin: 0 auto;
+  color: #d8e0ea;
+  font-size: 16px;
+  line-height: 1.8;
 }
 
-.missionText {
-  margin: 0 0 34px;
-  color: #9fb5ce;
-  font-size: 15px;
-  letter-spacing: 0.16em;
+.infoGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 30px 0;
 }
 
-.missionList {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  align-items: center;
+.infoCard {
+  padding: 22px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  text-align: left;
 }
 
-.missionCard {
-  width: min(460px, 88vw);
-  padding: 20px 22px;
-  border: 1px solid rgba(210, 230, 255, 0.2);
-  background:
-    linear-gradient(
-      to bottom,
-      rgba(34, 59, 96, 0.92),
-      rgba(17, 31, 54, 0.96)
-    );
-  color: #f7fbff;
-  text-align: center;
-  cursor: pointer;
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.22),
-    0 0 18px rgba(80, 140, 255, 0.08);
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    background 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-.missionCard:hover {
-  transform: translateY(-2px);
-  border-color: rgba(220, 235, 255, 0.4);
-  background:
-    linear-gradient(
-      to bottom,
-      rgba(45, 79, 129, 0.96),
-      rgba(22, 41, 71, 0.98)
-    );
-  box-shadow:
-    0 14px 34px rgba(0, 0, 0, 0.28),
-    0 0 20px rgba(95, 160, 255, 0.14);
-}
-
-.missionLabel {
-  display: block;
-  margin-bottom: 8px;
-  color: #9bb7d7;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-}
-
-.missionTitle {
+.infoCard strong {
   display: block;
   margin-bottom: 10px;
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 18px;
 }
 
-.missionTime {
-  display: block;
-  color: #d0dceb;
+.infoCard p {
+  margin: 0;
+  color: #d8e0ea;
   font-size: 14px;
-  letter-spacing: 0.04em;
-  margin-bottom: 6px;
+  line-height: 1.7;
 }
 
-.missionState {
-  display: block;
-  color: #8fc0ff;
-  font-size: 13px;
-  letter-spacing: 0.08em;
+.actions {
+  width: min(360px, 100%);
+  margin: 0 auto;
+
+  display: grid;
+  gap: 12px;
 }
 
-@media (max-width: 640px) {
-  .container {
-    padding: 32px 18px;
+.mainButton,
+.subButton,
+.backButton {
+  padding: 15px 20px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.mainButton {
+  border: 1px solid rgba(157, 198, 255, 0.6);
+  background: rgba(63, 123, 216, 0.86);
+  color: white;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.subButton,
+.backButton {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #d8e0ea;
+}
+
+.mainButton:hover,
+.subButton:hover,
+.backButton:hover {
+  transform: translateY(-2px);
+}
+
+@media (max-width: 760px) {
+  .panel {
+    padding: 34px 20px;
   }
 
-  .statusText {
-    font-size: 16px;
-  }
-
-  .missionText {
-    font-size: 14px;
-    margin-bottom: 28px;
-  }
-
-  .missionCard {
-    padding: 18px 16px;
-  }
-
-  .missionTitle {
-    font-size: 20px;
+  .infoGrid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
