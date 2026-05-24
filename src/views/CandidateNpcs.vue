@@ -10,8 +10,8 @@
 
         <p class="desc">
           채용 심사를 통과한 인물입니다.
-          숙련도 10을 달성한 분야를 기준으로 2차 세부직업만 선택할 수 있습니다.
-          마음에 들지 않으면 탈락 처리할 수 있습니다.
+          숙련도 10을 달성한 분야 기준으로
+          남아 있는 2차 직업만 선택 가능합니다.
         </p>
 
         <div class="summaryBox">
@@ -21,7 +21,7 @@
       </section>
 
       <section class="card">
-        <div v-if="game.candidates.length === 0" class="empty">
+        <div v-if="sortedCandidates.length === 0" class="empty">
           현재 신규채용자 후보가 없습니다.
         </div>
 
@@ -30,16 +30,12 @@
           :key="npc.id"
           class="npcCard"
         >
-          <input
-            class="nameInput"
-            v-model="npc.name"
-            placeholder="이름 입력"
-            @change="saveGameNow"
-          />
+          <strong class="candidateTitle">
+            {{ influenceLabels[getBestSkillKey(npc)] }} 후보 인원
+          </strong>
 
           <p>
-            {{ genderLabel(npc.gender) }}
-            · 확정 분야:
+            확정 분야:
             {{ influenceLabels[getBestSkillKey(npc)] }}
             {{ getBestSkillValue(npc) }}
           </p>
@@ -50,13 +46,19 @@
               :key="field"
               :class="{ bestSkill: field === getBestSkillKey(npc) }"
             >
-              {{ influenceLabels[field] }} {{ npc.skills[field] || 0 }}
+              {{ influenceLabels[field] }}
+              {{ npc.skills[field] || 0 }}
             </span>
           </div>
 
-          <div class="selects">
+          <div
+            v-if="getJobs(getBestSkillKey(npc)).length > 0"
+            class="selects"
+          >
             <select v-model="selectedSpecs[npc.id]">
-              <option value="">2차 직업 선택</option>
+              <option value="">
+                2차 직업 선택
+              </option>
 
               <option
                 v-for="job in getJobs(getBestSkillKey(npc))"
@@ -69,6 +71,7 @@
 
             <button
               class="mainButton"
+              :disabled="isSaving"
               @click="startApprentice(npc)"
             >
               견습 시작
@@ -76,17 +79,30 @@
 
             <button
               class="dangerButton"
+              :disabled="isSaving"
               @click="rejectCandidate(npc)"
             >
               탈락 처리
             </button>
           </div>
+
+          <div v-else class="closedBox">
+            해당 분야의 모든 직업이 채워졌습니다.
+          </div>
+
+          <p v-if="noticeMap[npc.id]" class="noticeText">
+            {{ noticeMap[npc.id] }}
+          </p>
         </div>
       </section>
     </main>
 
     <main class="panel" v-else>
       <h1>저장된 도시가 없습니다</h1>
+
+      <p>
+        Google 로그인 후 새 도시를 만들어주세요.
+      </p>
 
       <button class="back" @click="goCreate">
         새 도시 만들기
@@ -111,27 +127,30 @@ import {
   missionFields
 } from '../data/gameDefaults'
 
-import { jobSpecializations } from '../data/jobs'
-
 import {
   assignCandidateToApprentice,
-  genderLabel,
   getBestSkillKey,
   getBestSkillValue,
+  getOpenSpecializationsByField,
   loadGame,
   saveGame,
-  updateGameTick
+  updateGameTick,
+  watchGame
 } from '../utils/gameEngine'
 
 const router = useRouter()
 
 const game = ref(null)
 const selectedSpecs = ref({})
+const noticeMap = ref({})
+const isSaving = ref(false)
 
 let timer = null
+let unsubscribeGame = null
+let isTickSaving = false
 
 const sortedCandidates = computed(() => {
-  if (!game.value) return []
+  if (!game.value?.candidates) return []
 
   return [...game.value.candidates].sort((a, b) => {
     return getBestSkillValue(b) - getBestSkillValue(a)
@@ -139,35 +158,102 @@ const sortedCandidates = computed(() => {
 })
 
 function getJobs(field) {
-  if (!field) return []
+  if (!field || !game.value) return []
 
-  return jobSpecializations[field] || []
+  return getOpenSpecializationsByField(
+    game.value,
+    field
+  )
 }
 
-function startApprentice(npc) {
+function setNotice(npcId, message) {
+  noticeMap.value = {
+    ...noticeMap.value,
+    [npcId]: message
+  }
+}
+
+function clearNotice(npcId) {
+  if (!noticeMap.value[npcId]) return
+
+  const nextMap = { ...noticeMap.value }
+  delete nextMap[npcId]
+  noticeMap.value = nextMap
+}
+
+async function startApprentice(npc) {
   const field = getBestSkillKey(npc)
   const spec = selectedSpecs.value[npc.id]
 
-  if (!npc.name || !field || !spec) return
+  if (!field || !spec) {
+    setNotice(
+      npc.id,
+      '2차 직업을 선택해주세요.'
+    )
 
-  assignCandidateToApprentice(game.value, npc, field, spec)
+    return
+  }
 
-  saveGameNow()
+  if (!game.value || isSaving.value) return
+
+  isSaving.value = true
+  clearNotice(npc.id)
+
+  try {
+    await assignCandidateToApprentice(
+      game.value,
+      npc,
+      field,
+      spec
+    )
+
+    delete selectedSpecs.value[npc.id]
+  } catch (error) {
+    console.error(error)
+
+    setNotice(
+      npc.id,
+      '견습 배치 저장 중 오류가 발생했습니다.'
+    )
+  } finally {
+    isSaving.value = false
+  }
 }
 
-function rejectCandidate(npc) {
-  game.value.candidates = game.value.candidates.filter((item) => {
-    return item.id !== npc.id
-  })
+async function rejectCandidate(npc) {
+  if (!game.value || isSaving.value) return
 
-  saveGameNow()
+  isSaving.value = true
+  clearNotice(npc.id)
+
+  try {
+    game.value.candidates =
+      game.value.candidates.filter((item) => {
+        return item.id !== npc.id
+      })
+
+    delete selectedSpecs.value[npc.id]
+
+    await saveGame(game.value)
+  } catch (error) {
+    console.error(error)
+
+    setNotice(
+      npc.id,
+      '후보 탈락 처리 중 오류가 발생했습니다.'
+    )
+  } finally {
+    isSaving.value = false
+  }
 }
 
 function normalizeInfluences() {
   if (!game.value) return
 
   if (!game.value.city.influences) {
-    game.value.city.influences = { ...defaultInfluences }
+    game.value.city.influences = {
+      ...defaultInfluences
+    }
   }
 
   missionFields.forEach((field) => {
@@ -182,10 +268,6 @@ function normalizeInfluences() {
   })
 }
 
-function saveGameNow() {
-  saveGame(game.value)
-}
-
 function goBack() {
   router.push('/play')
 }
@@ -194,24 +276,53 @@ function goCreate() {
   router.push('/character-create')
 }
 
-function tick() {
+async function tick() {
   if (!game.value) return
+  if (isTickSaving || isSaving.value) return
 
-  updateGameTick(game.value)
-  normalizeInfluences()
-  saveGame(game.value)
+  isTickSaving = true
+
+  try {
+    normalizeInfluences()
+    await updateGameTick(game.value)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    isTickSaving = false
+  }
 }
 
-onMounted(() => {
-  game.value = loadGame()
+onMounted(async () => {
+  try {
+    game.value = await loadGame()
 
-  normalizeInfluences()
+    normalizeInfluences()
 
-  timer = setInterval(tick, 1000)
+    unsubscribeGame = watchGame((firebaseGame) => {
+      if (!firebaseGame) {
+        game.value = null
+        return
+      }
+
+      game.value = firebaseGame
+
+      normalizeInfluences()
+    })
+
+    timer = setInterval(tick, 1000)
+  } catch (error) {
+    console.error(error)
+  }
 })
 
 onUnmounted(() => {
-  clearInterval(timer)
+  if (timer) {
+    clearInterval(timer)
+  }
+
+  if (unsubscribeGame) {
+    unsubscribeGame()
+  }
 })
 </script>
 
@@ -238,7 +349,6 @@ onUnmounted(() => {
 .back,
 .card,
 .npcCard,
-input,
 select,
 button,
 .panel {
@@ -286,14 +396,10 @@ p {
   padding: 14px;
 }
 
-.nameInput,
-select {
-  width: 100%;
-  max-width: 260px;
-  margin-right: 8px;
-  padding: 10px;
-  background: rgba(0, 0, 0, 0.2);
-  color: white;
+.candidateTitle {
+  display: block;
+  margin-bottom: 12px;
+  color: #9dc6ff;
 }
 
 .skills {
@@ -321,6 +427,14 @@ select {
   gap: 8px;
 }
 
+select {
+  width: 100%;
+  max-width: 260px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  color: white;
+}
+
 .mainButton,
 .dangerButton {
   padding: 10px 14px;
@@ -334,6 +448,25 @@ select {
 
 .dangerButton {
   background: rgba(160, 58, 58, 0.82);
+}
+
+.mainButton:disabled,
+.dangerButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.closedBox {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(160, 58, 58, 0.18);
+  color: #ffd0d0;
+}
+
+.noticeText {
+  margin-top: 10px;
+  color: #9dc6ff;
+  font-size: 13px;
 }
 
 .panel {
@@ -352,7 +485,6 @@ select {
     display: grid;
   }
 
-  .nameInput,
   select {
     max-width: none;
   }

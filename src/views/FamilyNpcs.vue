@@ -9,9 +9,8 @@
         <h1>대표 / 배우자</h1>
 
         <p class="desc">
-          대표는 경영/전략 분야 정규 직원만 지정할 수 있습니다.
-          배우자는 대표와 성별이 다른 정규 직원만 지정할 수 있습니다.
-          대표와 배우자는 지정 후 임무를 수행하지 않고 가문 시스템에 집중합니다.
+          이 페이지는 제거 예정입니다.
+          현재는 기존 저장 데이터 확인용으로만 유지됩니다.
         </p>
       </section>
 
@@ -24,8 +23,6 @@
 
             <p>
               {{ game.leaderNpc.specializationName }}
-              ·
-              {{ genderLabel(game.leaderNpc.gender) }}
             </p>
 
             <p>{{ game.leaderNpc.status }}</p>
@@ -44,8 +41,6 @@
 
             <p>
               {{ game.spouseNpc.specializationName }}
-              ·
-              {{ genderLabel(game.spouseNpc.gender) }}
             </p>
 
             <p>{{ game.spouseNpc.status }}</p>
@@ -73,13 +68,12 @@
 
           <div class="summaryBox">
             <span>자녀</span>
-            <strong>{{ game.children.length }}명</strong>
+            <strong>{{ game.children?.length || 0 }}명</strong>
           </div>
         </div>
 
         <p class="desc">
-          대표와 배우자가 모두 지정되면 추후 임신 확률, 임신 기간, 출산,
-          자녀 NPC 시스템이 이 영역에 연결됩니다.
+          추후 해당 영역은 다른 시스템으로 재구성될 예정입니다.
         </p>
       </section>
     </main>
@@ -109,10 +103,9 @@ import {
 } from '../data/gameDefaults'
 
 import {
-  genderLabel,
   loadGame,
-  saveGame,
-  updateGameTick
+  updateGameTick,
+  watchGame
 } from '../utils/gameEngine'
 
 const router = useRouter()
@@ -120,6 +113,8 @@ const router = useRouter()
 const game = ref(null)
 
 let timer = null
+let unsubscribeGame = null
+let isTickSaving = false
 
 function normalizeInfluences() {
   if (!game.value) return
@@ -148,24 +143,51 @@ function goCreate() {
   router.push('/character-create')
 }
 
-function tick() {
+async function tick() {
   if (!game.value) return
+  if (isTickSaving) return
 
-  updateGameTick(game.value)
-  normalizeInfluences()
-  saveGame(game.value)
+  isTickSaving = true
+
+  try {
+    normalizeInfluences()
+    await updateGameTick(game.value)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    isTickSaving = false
+  }
 }
 
-onMounted(() => {
-  game.value = loadGame()
+onMounted(async () => {
+  try {
+    game.value = await loadGame()
+    normalizeInfluences()
 
-  normalizeInfluences()
+    unsubscribeGame = watchGame((firebaseGame) => {
+      if (!firebaseGame) {
+        game.value = null
+        return
+      }
 
-  timer = setInterval(tick, 1000)
+      game.value = firebaseGame
+      normalizeInfluences()
+    })
+
+    timer = setInterval(tick, 1000)
+  } catch (error) {
+    console.error(error)
+  }
 })
 
 onUnmounted(() => {
-  clearInterval(timer)
+  if (timer) {
+    clearInterval(timer)
+  }
+
+  if (unsubscribeGame) {
+    unsubscribeGame()
+  }
 })
 </script>
 

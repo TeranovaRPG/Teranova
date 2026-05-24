@@ -66,7 +66,11 @@
     <main class="panel" v-else>
       <h1>저장된 도시가 없습니다</h1>
 
-      <button class="menuCard" @click="go('/character-create')">
+      <p>
+        Google 로그인 후 새 도시를 만들어주세요.
+      </p>
+
+      <button class="menuCard centerButton" @click="go('/character-create')">
         새 도시 만들기
       </button>
     </main>
@@ -91,16 +95,19 @@ import {
 
 import {
   loadGame,
-  saveGame,
-  updateGameTick
+  updateGameTick,
+  watchGame
 } from '../utils/gameEngine'
 
 const router = useRouter()
 
 const game = ref(null)
 const now = ref(new Date())
+const syncStatus = ref('Firebase 동기화 준비 중')
 
 let timer = null
+let unsubscribeGame = null
+let isTickSaving = false
 
 const stageLabel = computed(() => {
   if (!game.value) return ''
@@ -171,26 +178,59 @@ function go(path) {
   router.push(path)
 }
 
-function tick() {
-  if (!game.value) return
-
+async function tick() {
   now.value = new Date()
 
-  updateGameTick(game.value)
-  normalizeInfluences()
-  saveGame(game.value)
+  if (!game.value) return
+  if (isTickSaving) return
+
+  isTickSaving = true
+  syncStatus.value = '진행 상황 저장 중'
+
+  try {
+    normalizeInfluences()
+    await updateGameTick(game.value)
+    syncStatus.value = 'Firebase 실시간 동기화 완료'
+  } catch (error) {
+    console.error(error)
+    syncStatus.value = '동기화 오류 발생'
+  } finally {
+    isTickSaving = false
+  }
 }
 
-onMounted(() => {
-  game.value = loadGame()
+onMounted(async () => {
+  try {
+    game.value = await loadGame()
+    normalizeInfluences()
 
-  normalizeInfluences()
+    unsubscribeGame = watchGame((firebaseGame) => {
+      if (!firebaseGame) {
+        game.value = null
+        syncStatus.value = '저장된 도시 없음'
+        return
+      }
 
-  timer = setInterval(tick, 1000)
+      game.value = firebaseGame
+      normalizeInfluences()
+      syncStatus.value = 'Firebase 데이터 연결됨'
+    })
+
+    timer = setInterval(tick, 1000)
+  } catch (error) {
+    console.error(error)
+    syncStatus.value = '로그인 또는 데이터 연결 필요'
+  }
 })
 
 onUnmounted(() => {
-  clearInterval(timer)
+  if (timer) {
+    clearInterval(timer)
+  }
+
+  if (unsubscribeGame) {
+    unsubscribeGame()
+  }
 })
 </script>
 
@@ -238,6 +278,12 @@ h1 {
 
 p {
   color: #cfd8e3;
+}
+
+.syncText {
+  margin-top: 8px;
+  color: #9dc6ff;
+  font-size: 13px;
 }
 
 .timeBox {
@@ -288,6 +334,10 @@ p {
   text-align: left;
 
   cursor: pointer;
+}
+
+.centerButton {
+  text-align: center;
 }
 
 .menuCard strong {

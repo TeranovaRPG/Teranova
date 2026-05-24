@@ -9,20 +9,29 @@
         <h1>유입 인원</h1>
 
         <p class="desc">
-          신규 인물은 10분마다 자동 유입됩니다.
-          유입 인원은 1~5분 임무를 반복하며,
-          한 분야 숙련도 10 달성 시 50% 확률로 신규채용자 명단에 올라갑니다.
+          신규 인물은 남아 있는 직업 수요에 따라 자동 유입됩니다.
+          모든 2차 직업이 채워지면 신규 유입은 자동 중단됩니다.
         </p>
 
         <div class="summaryGrid">
           <div class="summaryBox">
             <span>현재 유입 인원</span>
-            <strong>{{ sortedIncomingNpcs.length }}명</strong>
+
+            <strong>
+              {{ sortedIncomingNpcs.length }}명
+            </strong>
           </div>
 
           <div class="summaryBox">
-            <span>다음 신규 인물 도착까지</span>
-            <strong>{{ formatTime(nextIncomingRemaining) }}</strong>
+            <span>신규 유입 상태</span>
+
+            <strong v-if="isRecruitmentStopped">
+              유입 종료
+            </strong>
+
+            <strong v-else>
+              {{ formatTime(nextIncomingRemaining) }}
+            </strong>
           </div>
         </div>
       </section>
@@ -36,7 +45,10 @@
           </span>
         </div>
 
-        <div v-if="sortedIncomingNpcs.length === 0" class="empty">
+        <div
+          v-if="sortedIncomingNpcs.length === 0"
+          class="empty"
+        >
           현재 적응 중인 인물이 없습니다.
         </div>
 
@@ -47,10 +59,13 @@
         >
           <div class="npcTop">
             <div>
-              <strong>이름 미정</strong>
+              <strong>
+                {{ influenceLabels[getBestSkillKey(npc)] }}
+                유입 인원
+              </strong>
 
               <p>
-                {{ genderLabel(npc.gender) }} · {{ npc.status }}
+                {{ npc.status }}
               </p>
             </div>
 
@@ -62,17 +77,21 @@
           <div class="missionInfo">
             <p>
               현재 과정:
-              {{ npc.mission.name }}
+              {{ npc.mission?.name || '대기중' }}
             </p>
 
             <p>
               분야:
-              {{ influenceLabels[npc.mission.field] }}
+              {{
+                influenceLabels[npc.mission?.field] || '미정'
+              }}
             </p>
 
             <p>
               최고 숙련:
-              {{ influenceLabels[getBestSkillKey(npc)] }}
+              {{
+                influenceLabels[getBestSkillKey(npc)]
+              }}
               {{ getBestSkillValue(npc) }}
             </p>
           </div>
@@ -81,9 +100,13 @@
             <span
               v-for="field in missionFields"
               :key="field"
-              :class="{ bestSkill: field === getBestSkillKey(npc) }"
+              :class="{
+                bestSkill:
+                  field === getBestSkillKey(npc)
+              }"
             >
-              {{ influenceLabels[field] }} {{ npc.skills[field] || 0 }}
+              {{ influenceLabels[field] }}
+              {{ npc.skills[field] || 0 }}
             </span>
           </div>
         </div>
@@ -92,6 +115,10 @@
 
     <main class="panel" v-else>
       <h1>저장된 도시가 없습니다</h1>
+
+      <p>
+        Google 로그인 후 새 도시를 만들어주세요.
+      </p>
 
       <button class="back" @click="goCreate">
         새 도시 만들기
@@ -118,12 +145,11 @@ import {
 
 import {
   formatTime,
-  genderLabel,
   getBestSkillKey,
   getBestSkillValue,
   loadGame,
-  saveGame,
-  updateGameTick
+  updateGameTick,
+  watchGame
 } from '../utils/gameEngine'
 
 const router = useRouter()
@@ -132,31 +158,51 @@ const game = ref(null)
 const now = ref(new Date())
 
 let timer = null
+let unsubscribeGame = null
+let isTickSaving = false
+
+const isRecruitmentStopped = computed(() => {
+  return !!game.value?.recruitment?.stopped
+})
 
 const nextIncomingRemaining = computed(() => {
-  if (!game.value) return 0
+  if (
+    !game.value?.recruitment?.nextIncomingAt
+  ) {
+    return 0
+  }
 
   return Math.max(
     0,
     Math.ceil(
-      (game.value.recruitment.nextIncomingAt - now.value.getTime()) / 1000
+      (
+        game.value.recruitment.nextIncomingAt -
+        now.value.getTime()
+      ) / 1000
     )
   )
 })
 
 const sortedIncomingNpcs = computed(() => {
-  if (!game.value) return []
+  if (!game.value?.incomingNpcs) return []
 
-  return [...game.value.incomingNpcs].sort((a, b) => {
-    return a.missionRemaining - b.missionRemaining
-  })
+  return [...game.value.incomingNpcs].sort(
+    (a, b) => {
+      return (
+        a.missionRemaining -
+        b.missionRemaining
+      )
+    }
+  )
 })
 
 function normalizeInfluences() {
   if (!game.value) return
 
   if (!game.value.city.influences) {
-    game.value.city.influences = { ...defaultInfluences }
+    game.value.city.influences = {
+      ...defaultInfluences
+    }
   }
 
   missionFields.forEach((field) => {
@@ -179,26 +225,58 @@ function goCreate() {
   router.push('/character-create')
 }
 
-function tick() {
-  if (!game.value) return
-
+async function tick() {
   now.value = new Date()
 
-  updateGameTick(game.value)
-  normalizeInfluences()
-  saveGame(game.value)
+  if (!game.value) return
+  if (isTickSaving) return
+
+  isTickSaving = true
+
+  try {
+    normalizeInfluences()
+
+    await updateGameTick(game.value)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    isTickSaving = false
+  }
 }
 
-onMounted(() => {
-  game.value = loadGame()
+onMounted(async () => {
+  try {
+    game.value = await loadGame()
 
-  normalizeInfluences()
+    normalizeInfluences()
 
-  timer = setInterval(tick, 1000)
+    unsubscribeGame = watchGame(
+      (firebaseGame) => {
+        if (!firebaseGame) {
+          game.value = null
+          return
+        }
+
+        game.value = firebaseGame
+
+        normalizeInfluences()
+      }
+    )
+
+    timer = setInterval(tick, 1000)
+  } catch (error) {
+    console.error(error)
+  }
 })
 
 onUnmounted(() => {
-  clearInterval(timer)
+  if (timer) {
+    clearInterval(timer)
+  }
+
+  if (unsubscribeGame) {
+    unsubscribeGame()
+  }
 })
 </script>
 
@@ -234,7 +312,8 @@ onUnmounted(() => {
 
   color: white;
 
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border:
+    1px solid rgba(255, 255, 255, 0.12);
 }
 
 .back {

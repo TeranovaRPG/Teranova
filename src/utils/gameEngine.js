@@ -9,8 +9,6 @@ import {
   missionFields,
   REGULAR_MAX_SECONDS,
   REGULAR_MIN_SECONDS,
-  STORAGE_KEY,
-  TRAINEE_PASS_RATE,
   TRAINEE_PASS_SKILL
 } from '../data/gameDefaults'
 
@@ -21,32 +19,89 @@ import {
   specializationMissionPools
 } from '../data/missions'
 
-import { getSpecializationName } from '../data/jobs'
+import {
+  getSpecializationName,
+  jobSpecializations
+} from '../data/jobs'
 
-export function loadGame() {
-  const saved = localStorage.getItem(STORAGE_KEY)
+import { auth, db } from '../firebase'
 
-  if (!saved) return null
+import {
+  ref as dbRef,
+  get,
+  set,
+  onValue
+} from 'firebase/database'
 
-  const game = JSON.parse(saved)
+const FIREBASE_GAME_PATH = 'teranove/game'
+const TRAINEE_PASS_RATE = 1
+
+function getCurrentUid() {
+  return auth.currentUser?.uid || null
+}
+
+function getGameRef() {
+  const uid = getCurrentUid()
+
+  if (!uid) {
+    throw new Error('로그인이 필요합니다.')
+  }
+
+  return dbRef(db, `users/${uid}/${FIREBASE_GAME_PATH}`)
+}
+
+function createId(prefix = 'id') {
+  const randomText = Math.random()
+    .toString(36)
+    .slice(2, 11)
+
+  return `${prefix}_${Date.now()}_${randomText}`
+}
+
+export async function loadGame() {
+  if (!getCurrentUid()) return null
+
+  const snapshot = await get(getGameRef())
+
+  if (!snapshot.exists()) return null
+
+  const game = snapshot.val()
 
   normalizeGame(game)
 
   return game
 }
 
-export function saveGame(game) {
+export async function saveGame(game) {
   if (!game) return
+  if (!getCurrentUid()) return
 
   game.updatedAt = Date.now()
 
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(game)
-  )
+  await set(getGameRef(), game)
 }
 
-export function createNewGame(playerName, cityName) {
+export function watchGame(callback) {
+  if (!getCurrentUid()) {
+    callback(null)
+    return () => {}
+  }
+
+  return onValue(getGameRef(), (snapshot) => {
+    if (!snapshot.exists()) {
+      callback(null)
+      return
+    }
+
+    const game = snapshot.val()
+
+    normalizeGame(game)
+
+    callback(game)
+  })
+}
+
+export async function createNewGame(playerName, cityName) {
   const now = Date.now()
 
   const game = {
@@ -62,7 +117,7 @@ export function createNewGame(playerName, cityName) {
       influences: { ...defaultInfluences }
     },
 
-    incomingNpcs: createInitialIncomingNpcs(5),
+    incomingNpcs: [],
     candidates: [],
     apprentices: [],
     regularReady: [],
@@ -73,6 +128,7 @@ export function createNewGame(playerName, cityName) {
     children: [],
 
     recruitment: {
+      stopped: false,
       nextIncomingAt: now + AUTO_INCOMING_MS
     },
 
@@ -80,23 +136,34 @@ export function createNewGame(playerName, cityName) {
     updatedAt: now
   }
 
-  saveGame(game)
+  game.incomingNpcs = createInitialIncomingNpcs(game, 5)
+
+  await saveGame(game)
 
   return game
 }
 
-export function updateGameTick(game) {
+export async function updateGameTick(game) {
   if (!game) return
+
+  normalizeGame(game)
 
   processIncomingTimer(game)
   updateIncomingNpcs(game)
   updateApprentices(game)
   updateRegularNpcs(game)
+  updateRecruitmentStopped(game)
 
-  saveGame(game)
+  await saveGame(game)
 }
 
 function normalizeGame(game) {
+  if (!game.player) {
+    game.player = {
+      name: '플레이어'
+    }
+  }
+
   if (!game.city) {
     game.city = {
       name: '테라노브 시티',
@@ -119,16 +186,25 @@ function normalizeGame(game) {
 
   if (!game.recruitment) {
     game.recruitment = {
+      stopped: false,
       nextIncomingAt: Date.now() + AUTO_INCOMING_MS
     }
   }
 
-  if (!game.incomingNpcs) game.incomingNpcs = []
-  if (!game.candidates) game.candidates = []
-  if (!game.apprentices) game.apprentices = []
-  if (!game.regularReady) game.regularReady = []
-  if (!game.regularNpcs) game.regularNpcs = []
-  if (!game.children) game.children = []
+  if (!Object.prototype.hasOwnProperty.call(game.recruitment, 'stopped')) {
+    game.recruitment.stopped = false
+  }
+
+  if (!game.recruitment.nextIncomingAt) {
+    game.recruitment.nextIncomingAt = Date.now() + AUTO_INCOMING_MS
+  }
+
+  if (!Array.isArray(game.incomingNpcs)) game.incomingNpcs = []
+  if (!Array.isArray(game.candidates)) game.candidates = []
+  if (!Array.isArray(game.apprentices)) game.apprentices = []
+  if (!Array.isArray(game.regularReady)) game.regularReady = []
+  if (!Array.isArray(game.regularNpcs)) game.regularNpcs = []
+  if (!Array.isArray(game.children)) game.children = []
 
   if (!Object.prototype.hasOwnProperty.call(game, 'leaderNpc')) {
     game.leaderNpc = null
@@ -147,14 +223,20 @@ function normalizeGame(game) {
   if (game.leaderNpc) normalizeNpc(game.leaderNpc)
   if (game.spouseNpc) normalizeNpc(game.spouseNpc)
 
-  saveGame(game)
+  updateRecruitmentStopped(game)
+
+  if (!game.createdAt) game.createdAt = Date.now()
+  if (!game.updatedAt) game.updatedAt = Date.now()
 }
 
 function normalizeNpc(npc) {
-  if (!npc.id) npc.id = crypto.randomUUID()
-  if (!npc.gender) npc.gender = randomGender()
+  if (!npc.id) npc.id = createId('npc')
   if (!npc.skills) npc.skills = createEmptySkills()
   if (!npc.specialSkills) npc.specialSkills = {}
+
+  if (Object.prototype.hasOwnProperty.call(npc, 'gender')) {
+    delete npc.gender
+  }
 
   missionFields.forEach((field) => {
     if (!Object.prototype.hasOwnProperty.call(npc.skills, field)) {
@@ -163,35 +245,151 @@ function normalizeNpc(npc) {
   })
 
   if (!npc.status) npc.status = '대기중'
-  if (!Object.prototype.hasOwnProperty.call(npc, 'mission')) npc.mission = null
-  if (!Object.prototype.hasOwnProperty.call(npc, 'missionRemaining')) npc.missionRemaining = 0
+
+  if (!Object.prototype.hasOwnProperty.call(npc, 'mission')) {
+    npc.mission = null
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(npc, 'missionRemaining')) {
+    npc.missionRemaining = 0
+  }
 }
+
+/*
+|--------------------------------------------------------------------------
+| 직업 슬롯 / 유입 제한
+|--------------------------------------------------------------------------
+*/
+
+export function getOccupiedSpecializationIds(game) {
+  const ids = new Set()
+
+  const groups = [
+    game.apprentices || [],
+    game.regularReady || [],
+    game.regularNpcs || []
+  ]
+
+  groups.forEach((group) => {
+    group.forEach((npc) => {
+      if (npc.specializationId) {
+        ids.add(npc.specializationId)
+      }
+    })
+  })
+
+  return ids
+}
+
+export function getOpenSpecializationsByField(game, field) {
+  const occupied = getOccupiedSpecializationIds(game)
+  const jobs = jobSpecializations[field] || []
+
+  return jobs.filter((job) => {
+    return !occupied.has(job.id)
+  })
+}
+
+export function isFieldOpen(game, field) {
+  return getOpenSpecializationsByField(game, field).length > 0
+}
+
+export function getOpenFields(game) {
+  return missionFields.filter((field) => {
+    return isFieldOpen(game, field)
+  })
+}
+
+export function hasAnyOpenSpecialization(game) {
+  return getOpenFields(game).length > 0
+}
+
+function updateRecruitmentStopped(game) {
+  game.recruitment.stopped = !hasAnyOpenSpecialization(game)
+
+  if (game.recruitment.stopped) {
+    game.recruitment.nextIncomingAt = null
+  } else if (!game.recruitment.nextIncomingAt) {
+    game.recruitment.nextIncomingAt = Date.now() + AUTO_INCOMING_MS
+  }
+}
+
+function getOpenIncomingFieldMissions(game) {
+  const openFields = getOpenFields(game)
+
+  return incomingFieldMissions.filter((mission) => {
+    return openFields.includes(mission.field)
+  })
+}
+
+function getRandomOpenFieldMission(game) {
+  const missions = getOpenIncomingFieldMissions(game)
+
+  return getRandomItem(missions)
+}
+
+/*
+|--------------------------------------------------------------------------
+| 유입 처리
+|--------------------------------------------------------------------------
+*/
 
 function processIncomingTimer(game) {
   const current = Date.now()
 
-  if (current < game.recruitment.nextIncomingAt) return
+  updateRecruitmentStopped(game)
 
-  game.incomingNpcs.push(createIncomingNpc())
+  if (game.recruitment.stopped) return
 
-  game.recruitment.nextIncomingAt = current + AUTO_INCOMING_MS
+  if (!game.recruitment.nextIncomingAt) {
+    game.recruitment.nextIncomingAt = current + AUTO_INCOMING_MS
+    return
+  }
+
+  while (
+    current >= game.recruitment.nextIncomingAt &&
+    hasAnyOpenSpecialization(game)
+  ) {
+    game.incomingNpcs.push(createIncomingNpc(game))
+    game.recruitment.nextIncomingAt += AUTO_INCOMING_MS
+  }
+
+  updateRecruitmentStopped(game)
 }
 
-function createInitialIncomingNpcs(count) {
-  return Array.from({ length: count }, () => {
-    return createIncomingNpc()
-  })
+function createInitialIncomingNpcs(game, count) {
+  const npcs = []
+
+  for (let i = 0; i < count; i += 1) {
+    if (!hasAnyOpenSpecialization(game)) break
+
+    npcs.push(createIncomingNpc(game))
+  }
+
+  return npcs
 }
 
-function createIncomingNpc() {
+function createIncomingNpc(game) {
   const guideMission = getRandomItem(incomingMissions)
-  const fieldMission = getRandomItem(incomingFieldMissions)
+  const fieldMission = getRandomOpenFieldMission(game)
+
+  if (!guideMission || !fieldMission) {
+    return {
+      id: createId('npc'),
+      phase: 'incoming',
+      name: '',
+      status: '유입 대기 종료',
+      mission: null,
+      missionRemaining: 0,
+      skills: createEmptySkills(),
+      specialSkills: {}
+    }
+  }
 
   return {
-    id: crypto.randomUUID(),
+    id: createId('npc'),
     phase: 'incoming',
     name: '',
-    gender: randomGender(),
     status: '유입 적응중',
     mission: {
       id: guideMission.id,
@@ -202,7 +400,7 @@ function createIncomingNpc() {
       INCOMING_MIN_SECONDS,
       INCOMING_MAX_SECONDS
     ),
-    skills: createInitialIncomingSkills(),
+    skills: createInitialIncomingSkills(game, fieldMission.field),
     specialSkills: {}
   }
 }
@@ -211,6 +409,11 @@ function updateIncomingNpcs(game) {
   const finished = []
 
   game.incomingNpcs.forEach((npc) => {
+    if (!npc.mission) {
+      finished.push(npc)
+      return
+    }
+
     npc.missionRemaining -= 1
 
     if (npc.missionRemaining <= 0) {
@@ -226,16 +429,34 @@ function updateIncomingNpcs(game) {
 function completeIncomingMission(game, npc) {
   const field = npc.mission?.field
 
-  if (field) {
-    npc.skills[field] += 1
-  }
-
-  if (field && npc.skills[field] >= TRAINEE_PASS_SKILL) {
-    judgeIncomingNpc(game, npc)
+  if (!field) {
+    removeIncomingNpc(game, npc)
     return
   }
 
-  const nextMission = getRandomItem(incomingFieldMissions)
+  if (!isFieldOpen(game, field)) {
+    reassignOrRemoveIncomingNpc(game, npc)
+    return
+  }
+
+  npc.skills[field] += 1
+
+  if (npc.skills[field] >= TRAINEE_PASS_SKILL) {
+    judgeIncomingNpc(game, npc, field)
+    return
+  }
+
+  assignNextIncomingMission(game, npc)
+}
+
+function assignNextIncomingMission(game, npc) {
+  const nextMission = getRandomOpenFieldMission(game)
+
+  if (!nextMission) {
+    removeIncomingNpc(game, npc)
+    updateRecruitmentStopped(game)
+    return
+  }
 
   npc.mission = {
     id: nextMission.id,
@@ -249,10 +470,38 @@ function completeIncomingMission(game, npc) {
   )
 }
 
-function judgeIncomingNpc(game, npc) {
+function reassignOrRemoveIncomingNpc(game, npc) {
+  const nextMission = getRandomOpenFieldMission(game)
+
+  if (!nextMission) {
+    removeIncomingNpc(game, npc)
+    updateRecruitmentStopped(game)
+    return
+  }
+
+  npc.status = '유입 적응중'
+  npc.mission = {
+    id: nextMission.id,
+    name: nextMission.name,
+    field: nextMission.field
+  }
+
+  npc.missionRemaining = randomBetween(
+    INCOMING_MIN_SECONDS,
+    INCOMING_MAX_SECONDS
+  )
+}
+
+function removeIncomingNpc(game, npc) {
   game.incomingNpcs = game.incomingNpcs.filter((item) => {
     return item.id !== npc.id
   })
+}
+
+function judgeIncomingNpc(game, npc, field) {
+  removeIncomingNpc(game, npc)
+
+  if (!isFieldOpen(game, field)) return
 
   const passed = Math.random() < TRAINEE_PASS_RATE
 
@@ -263,12 +512,33 @@ function judgeIncomingNpc(game, npc) {
   npc.name = ''
   npc.mission = null
   npc.missionRemaining = 0
+  npc.assignedField = field
 
   game.candidates.push(npc)
 }
 
-export function assignCandidateToApprentice(game, npc, field, specializationId) {
-  if (!npc.name) return
+/*
+|--------------------------------------------------------------------------
+| 후보 / 견습 / 정규
+|--------------------------------------------------------------------------
+*/
+
+export async function assignCandidateToApprentice(
+  game,
+  npc,
+  field,
+  specializationId
+) {
+  if (!field || !specializationId) return
+
+  const openJobs = getOpenSpecializationsByField(game, field)
+  const canUseSpecialization = openJobs.some((job) => {
+    return job.id === specializationId
+  })
+
+  if (!canUseSpecialization) return
+
+  const specializationName = getSpecializationName(field, specializationId)
 
   game.candidates = game.candidates.filter((item) => {
     return item.id !== npc.id
@@ -278,7 +548,8 @@ export function assignCandidateToApprentice(game, npc, field, specializationId) 
   npc.status = '견습 진행중'
   npc.assignedField = field
   npc.specializationId = specializationId
-  npc.specializationName = getSpecializationName(field, specializationId)
+  npc.specializationName = specializationName
+  npc.name = specializationName
   npc.apprenticeCompleted = 0
   npc.specialSkills = {}
 
@@ -286,7 +557,9 @@ export function assignCandidateToApprentice(game, npc, field, specializationId) 
 
   game.apprentices.push(npc)
 
-  saveGame(game)
+  updateRecruitmentStopped(game)
+
+  await saveGame(game)
 }
 
 function assignApprenticeMission(npc) {
@@ -363,7 +636,22 @@ function moveToRegularReady(game, npc) {
   game.regularReady.push(npc)
 }
 
-export function confirmRegularNpc(game, npc, specializationId) {
+export async function confirmRegularNpc(game, npc, specializationId) {
+  const field = npc.assignedField
+
+  if (!field || !specializationId) return
+
+  const currentSpecializationId = npc.specializationId
+
+  if (specializationId !== currentSpecializationId) {
+    const openJobs = getOpenSpecializationsByField(game, field)
+    const canUseSpecialization = openJobs.some((job) => {
+      return job.id === specializationId
+    })
+
+    if (!canUseSpecialization) return
+  }
+
   game.regularReady = game.regularReady.filter((item) => {
     return item.id !== npc.id
   })
@@ -372,15 +660,18 @@ export function confirmRegularNpc(game, npc, specializationId) {
   npc.status = '정규 업무중'
   npc.specializationId = specializationId
   npc.specializationName = getSpecializationName(
-    npc.assignedField,
+    field,
     specializationId
   )
+  npc.name = npc.specializationName
 
   assignRegularMission(npc)
 
   game.regularNpcs.push(npc)
 
-  saveGame(game)
+  updateRecruitmentStopped(game)
+
+  await saveGame(game)
 }
 
 function assignRegularMission(npc) {
@@ -419,7 +710,13 @@ function updateRegularNpcs(game) {
   })
 }
 
-export function setLeaderNpc(game, npc) {
+/*
+|--------------------------------------------------------------------------
+| 구 시스템 유지용 함수
+|--------------------------------------------------------------------------
+*/
+
+export async function setLeaderNpc(game, npc) {
   if (npc.assignedField !== 'strategy') return
 
   game.regularNpcs = game.regularNpcs.filter((item) => {
@@ -434,13 +731,12 @@ export function setLeaderNpc(game, npc) {
 
   game.leaderNpc = npc
 
-  saveGame(game)
+  await saveGame(game)
 }
 
-export function setSpouseNpc(game, npc) {
+export async function setSpouseNpc(game, npc) {
   if (!game.leaderNpc) return
   if (game.spouseNpc) return
-  if (game.leaderNpc.gender === npc.gender) return
 
   game.regularNpcs = game.regularNpcs.filter((item) => {
     return item.id !== npc.id
@@ -454,8 +750,14 @@ export function setSpouseNpc(game, npc) {
 
   game.spouseNpc = npc
 
-  saveGame(game)
+  await saveGame(game)
 }
+
+/*
+|--------------------------------------------------------------------------
+| 표시 / 유틸
+|--------------------------------------------------------------------------
+*/
 
 export function getBestSkillKey(npc) {
   let bestKey = missionFields[0]
@@ -487,11 +789,20 @@ export function createEmptySkills() {
   return skills
 }
 
-function createInitialIncomingSkills() {
+function createInitialIncomingSkills(game, preferredField) {
   const skills = createEmptySkills()
-  const field = getRandomItem(missionFields)
 
-  skills[field] = 1
+  if (preferredField && isFieldOpen(game, preferredField)) {
+    skills[preferredField] = 1
+    return skills
+  }
+
+  const openFields = getOpenFields(game)
+  const field = getRandomItem(openFields)
+
+  if (field) {
+    skills[field] = 1
+  }
 
   return skills
 }
@@ -517,14 +828,6 @@ export function formatTime(seconds) {
   }
 
   return `${remainSeconds}초`
-}
-
-export function randomGender() {
-  return Math.random() > 0.5 ? 'male' : 'female'
-}
-
-export function genderLabel(gender) {
-  return gender === 'male' ? '남성' : '여성'
 }
 
 function randomBetween(min, max) {

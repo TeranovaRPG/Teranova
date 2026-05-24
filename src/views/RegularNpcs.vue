@@ -47,20 +47,15 @@
           <div class="npcTop">
             <div>
               <strong>{{ npc.name }}</strong>
-              <p>
-                {{ npc.specializationName }} 견습 ·
-                {{ genderLabel(npc.gender) }}
-              </p>
+              <p>{{ npc.specializationName }} 견습</p>
             </div>
 
-            <span>
-              {{ formatTime(npc.missionRemaining) }}
-            </span>
+            <span>{{ formatTime(npc.missionRemaining) }}</span>
           </div>
 
           <p>분야: {{ influenceLabels[npc.assignedField] }}</p>
-          <p>현재 임무: {{ npc.mission.name }}</p>
-          <p>견습 진행: {{ npc.apprenticeCompleted }} / 3</p>
+          <p>현재 임무: {{ npc.mission?.name || '대기중' }}</p>
+          <p>견습 진행: {{ npc.apprenticeCompleted || 0 }} / 3</p>
         </div>
       </section>
 
@@ -78,10 +73,7 @@
         >
           <strong>{{ npc.name }}</strong>
 
-          <p>
-            {{ influenceLabels[npc.assignedField] }} 분야 ·
-            {{ genderLabel(npc.gender) }}
-          </p>
+          <p>{{ influenceLabels[npc.assignedField] }} 분야</p>
 
           <p>
             견습 참고 직업:
@@ -92,7 +84,7 @@
             <option value="">최종 특화 직업 선택</option>
 
             <option
-              v-for="job in getJobs(npc.assignedField)"
+              v-for="job in getJobs(npc)"
               :key="job.id"
               :value="job.id"
             >
@@ -102,10 +94,15 @@
 
           <button
             class="mainButton"
+            :disabled="isSaving"
             @click="confirmRegular(npc)"
           >
             정규 직원 확정
           </button>
+
+          <p v-if="noticeMap[npc.id]" class="noticeText">
+            {{ noticeMap[npc.id] }}
+          </p>
         </div>
       </section>
 
@@ -124,43 +121,24 @@
           <div class="npcTop">
             <div>
               <strong>{{ npc.name }}</strong>
-              <p>
-                {{ npc.specializationName }} ·
-                {{ genderLabel(npc.gender) }}
-              </p>
+              <p>{{ npc.specializationName }}</p>
             </div>
 
-            <span>
-              {{ formatTime(npc.missionRemaining) }}
-            </span>
+            <span>{{ formatTime(npc.missionRemaining) }}</span>
           </div>
 
           <p>분야: {{ influenceLabels[npc.assignedField] }}</p>
-          <p>현재 임무: {{ npc.mission?.name }}</p>
-
-          <div class="buttons">
-            <button
-              v-if="canSetLeader(npc)"
-              class="mainButton"
-              @click="setLeader(npc)"
-            >
-              대표 지정
-            </button>
-
-            <button
-              v-if="canSetSpouse(npc)"
-              class="mainButton"
-              @click="setSpouse(npc)"
-            >
-              배우자 지정
-            </button>
-          </div>
+          <p>현재 임무: {{ npc.mission?.name || '대기중' }}</p>
         </div>
       </section>
     </main>
 
     <main class="panel" v-else>
       <h1>저장된 도시가 없습니다</h1>
+
+      <p>
+        Google 로그인 후 새 도시를 만들어주세요.
+      </p>
 
       <button class="back" @click="goCreate">
         새 도시 만들기
@@ -185,28 +163,28 @@ import {
   missionFields
 } from '../data/gameDefaults'
 
-import { jobSpecializations } from '../data/jobs'
-
 import {
   confirmRegularNpc,
   formatTime,
-  genderLabel,
+  getOpenSpecializationsByField,
   loadGame,
-  saveGame,
-  setLeaderNpc,
-  setSpouseNpc,
-  updateGameTick
+  updateGameTick,
+  watchGame
 } from '../utils/gameEngine'
 
 const router = useRouter()
 
 const game = ref(null)
 const selectedSpecs = ref({})
+const noticeMap = ref({})
+const isSaving = ref(false)
 
 let timer = null
+let unsubscribeGame = null
+let isTickSaving = false
 
 const sortedApprentices = computed(() => {
-  if (!game.value) return []
+  if (!game.value?.apprentices) return []
 
   return [...game.value.apprentices].sort((a, b) => {
     return a.missionRemaining - b.missionRemaining
@@ -214,43 +192,78 @@ const sortedApprentices = computed(() => {
 })
 
 const sortedRegularNpcs = computed(() => {
-  if (!game.value) return []
+  if (!game.value?.regularNpcs) return []
 
   return [...game.value.regularNpcs].sort((a, b) => {
     return a.missionRemaining - b.missionRemaining
   })
 })
 
-function getJobs(field) {
-  return jobSpecializations[field] || []
+function getJobs(npc) {
+  if (!game.value || !npc?.assignedField) return []
+
+  const openJobs = getOpenSpecializationsByField(
+    game.value,
+    npc.assignedField
+  )
+
+  const currentJob = {
+    id: npc.specializationId,
+    name: npc.specializationName
+  }
+
+  const hasCurrentJob = openJobs.some((job) => {
+    return job.id === currentJob.id
+  })
+
+  if (!currentJob.id || hasCurrentJob) {
+    return openJobs
+  }
+
+  return [
+    currentJob,
+    ...openJobs
+  ]
 }
 
-function confirmRegular(npc) {
+function setNotice(npcId, message) {
+  noticeMap.value = {
+    ...noticeMap.value,
+    [npcId]: message
+  }
+}
+
+function clearNotice(npcId) {
+  if (!noticeMap.value[npcId]) return
+
+  const nextMap = { ...noticeMap.value }
+  delete nextMap[npcId]
+  noticeMap.value = nextMap
+}
+
+async function confirmRegular(npc) {
   const spec = selectedSpecs.value[npc.id]
 
-  if (!spec) return
+  if (!spec) {
+    setNotice(npc.id, '최종 특화 직업을 선택해주세요.')
+    return
+  }
 
-  confirmRegularNpc(game.value, npc, spec)
-}
+  if (!game.value || isSaving.value) return
 
-function canSetLeader(npc) {
-  return !game.value.leaderNpc && npc.assignedField === 'strategy'
-}
+  isSaving.value = true
+  clearNotice(npc.id)
 
-function canSetSpouse(npc) {
-  return (
-    game.value.leaderNpc &&
-    !game.value.spouseNpc &&
-    npc.gender !== game.value.leaderNpc.gender
-  )
-}
+  try {
+    await confirmRegularNpc(game.value, npc, spec)
 
-function setLeader(npc) {
-  setLeaderNpc(game.value, npc)
-}
-
-function setSpouse(npc) {
-  setSpouseNpc(game.value, npc)
+    delete selectedSpecs.value[npc.id]
+  } catch (error) {
+    console.error(error)
+    setNotice(npc.id, '정규 직원 확정 중 오류가 발생했습니다.')
+  } finally {
+    isSaving.value = false
+  }
 }
 
 function normalizeInfluences() {
@@ -280,24 +293,51 @@ function goCreate() {
   router.push('/character-create')
 }
 
-function tick() {
+async function tick() {
   if (!game.value) return
+  if (isTickSaving || isSaving.value) return
 
-  updateGameTick(game.value)
-  normalizeInfluences()
-  saveGame(game.value)
+  isTickSaving = true
+
+  try {
+    normalizeInfluences()
+    await updateGameTick(game.value)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    isTickSaving = false
+  }
 }
 
-onMounted(() => {
-  game.value = loadGame()
+onMounted(async () => {
+  try {
+    game.value = await loadGame()
+    normalizeInfluences()
 
-  normalizeInfluences()
+    unsubscribeGame = watchGame((firebaseGame) => {
+      if (!firebaseGame) {
+        game.value = null
+        return
+      }
 
-  timer = setInterval(tick, 1000)
+      game.value = firebaseGame
+      normalizeInfluences()
+    })
+
+    timer = setInterval(tick, 1000)
+  } catch (error) {
+    console.error(error)
+  }
 })
 
 onUnmounted(() => {
-  clearInterval(timer)
+  if (timer) {
+    clearInterval(timer)
+  }
+
+  if (unsubscribeGame) {
+    unsubscribeGame()
+  }
 })
 </script>
 
@@ -410,6 +450,17 @@ select {
   background: rgba(63, 123, 216, 0.82);
   color: white;
   cursor: pointer;
+}
+
+.mainButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.noticeText {
+  margin-top: 10px;
+  color: #9dc6ff;
+  font-size: 13px;
 }
 
 .panel {

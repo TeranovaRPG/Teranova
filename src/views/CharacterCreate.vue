@@ -25,15 +25,21 @@
         </label>
       </div>
 
+      <p class="statusText">
+        {{ statusText }}
+      </p>
+
       <button
         class="mainButton"
+        :disabled="isCreating"
         @click="createGame"
       >
-        도시 생성
+        {{ isCreating ? '생성 중...' : '도시 생성' }}
       </button>
 
       <button
         class="backButton"
+        :disabled="isCreating"
         @click="goBack"
       >
         이전으로
@@ -46,145 +52,49 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import {
-  AUTO_INCOMING_MS,
-  defaultInfluences,
-  INCOMING_MAX_SECONDS,
-  INCOMING_MIN_SECONDS,
-  missionFields,
-  STORAGE_KEY
-} from '../data/gameDefaults'
+import { auth } from '../firebase'
 
 import {
-  incomingFieldMissions,
-  incomingMissions
-} from '../data/missions'
+  createNewGame
+} from '../utils/gameEngine'
 
 const router = useRouter()
 
 const playerName = ref('')
 const cityName = ref('')
+const statusText = ref('Google 로그인 후 도시 데이터를 Firebase에 저장합니다.')
+const isCreating = ref(false)
 
-function createGame() {
-  const now = Date.now()
-
-  const game = {
-    player: {
-      name: playerName.value || '플레이어'
-    },
-
-    city: {
-      name: cityName.value || '테라노브 시티',
-      stage: 'small',
-      missionCompleted: 0,
-      npcLimit: 5,
-      influences: { ...defaultInfluences }
-    },
-
-    incomingNpcs: createInitialIncomingNpcs(5),
-
-    candidates: [],
-    apprentices: [],
-    regularReady: [],
-    regularNpcs: [],
-
-    leaderNpc: null,
-    spouseNpc: null,
-    children: [],
-
-    recruitment: {
-      nextIncomingAt: now + AUTO_INCOMING_MS
-    },
-
-    createdAt: now,
-    updatedAt: now
+async function createGame() {
+  if (!auth.currentUser) {
+    statusText.value = 'Google 로그인이 필요합니다. 시작 화면에서 로그인해주세요.'
+    router.push('/')
+    return
   }
 
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(game)
-  )
+  if (isCreating.value) return
 
-  router.push('/play')
-}
+  isCreating.value = true
+  statusText.value = '새 도시를 Firebase에 생성하는 중입니다.'
 
-function createInitialIncomingNpcs(count) {
-  return Array.from({ length: count }, () => {
-    const guideMission = getRandomItem(incomingMissions)
-    const fieldMission = getRandomItem(incomingFieldMissions)
+  try {
+    await createNewGame(
+      playerName.value,
+      cityName.value
+    )
 
-    return {
-      id: createId(),
-
-      phase: 'incoming',
-
-      name: '',
-
-      gender: Math.random() > 0.5
-        ? 'male'
-        : 'female',
-
-      status: '유입 적응중',
-
-      mission: {
-        id: guideMission.id,
-        name: guideMission.name,
-        field: fieldMission.field
-      },
-
-      missionRemaining: randomBetween(
-        INCOMING_MIN_SECONDS,
-        INCOMING_MAX_SECONDS
-      ),
-
-      skills: createInitialSkills(),
-
-      specialSkills: {}
-    }
-  })
-}
-
-function createInitialSkills() {
-  const skills = {}
-
-  missionFields.forEach((field) => {
-    skills[field] = 0
-  })
-
-  const randomField = getRandomItem(missionFields)
-
-  skills[randomField] = 1
-
-  return skills
-}
-
-function createId() {
-  if (
-    typeof crypto !== 'undefined' &&
-    crypto.randomUUID
-  ) {
-    return crypto.randomUUID()
+    statusText.value = '도시 생성 완료.'
+    router.push('/play')
+  } catch (error) {
+    console.error(error)
+    statusText.value = '도시 생성 중 오류가 발생했습니다.'
+  } finally {
+    isCreating.value = false
   }
-
-  return `npc_${Date.now()}_${Math.random()
-    .toString(36)
-    .slice(2)}`
 }
 
-function randomBetween(min, max) {
-  return Math.floor(
-    Math.random() * (max - min + 1)
-  ) + min
-}
-
-function getRandomItem(items) {
-  if (!items || items.length === 0) {
-    return null
-  }
-
-  return items[
-    Math.floor(Math.random() * items.length)
-  ]
+function goBack() {
+  router.push('/')
 }
 </script>
 
@@ -248,6 +158,15 @@ input {
   font-size: 15px;
 }
 
+.statusText {
+  min-height: 22px;
+  margin: 18px 0 0;
+
+  color: #9dc6ff;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .mainButton,
 .backButton {
   width: 100%;
@@ -276,8 +195,14 @@ input {
   color: #d8e0ea;
 }
 
-.mainButton:hover,
-.backButton:hover {
+.mainButton:disabled,
+.backButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mainButton:hover:not(:disabled),
+.backButton:hover:not(:disabled) {
   transform: translateY(-2px);
 }
 </style>

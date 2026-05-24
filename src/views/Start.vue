@@ -9,6 +9,22 @@
         사람을 키우고, 도시를 만들고, 세계로 배출하세요.
       </p>
 
+      <div class="loginBox">
+        <button v-if="!user" class="googleButton" @click="login">
+          GOOGLE LOGIN
+        </button>
+
+        <div v-else class="userBox">
+          <p class="userText">
+            {{ user.displayName || user.email }} 접속 중
+          </p>
+
+          <button class="logoutButton" @click="logoutUser">
+            LOGOUT
+          </button>
+        </div>
+      </div>
+
       <div class="menu">
         <button class="mainButton" @click="startGame">
           GAME START
@@ -30,22 +46,55 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { STORAGE_KEY } from '../data/gameDefaults'
+
+import {
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged
+} from 'firebase/auth'
+
+import {
+  ref as dbRef,
+  get
+} from 'firebase/database'
+
+import { auth, googleProvider, db } from '../firebase'
 
 const router = useRouter()
+
+const user = ref(null)
 
 const text = 'TERANOVE 세계 접속 준비 완료.'
 const typedText = ref('')
 let index = 0
 
+function login() {
+  signInWithPopup(auth, googleProvider)
+}
+
+function logoutUser() {
+  signOut(auth)
+}
+
 function startGame() {
+  if (!user.value) {
+    login()
+    return
+  }
+
   router.push('/home')
 }
 
-function continueGame() {
-  const saved = localStorage.getItem(STORAGE_KEY)
+async function continueGame() {
+  if (!user.value) {
+    await login()
+    return
+  }
 
-  if (!saved) {
+  const uid = user.value.uid
+  const snapshot = await get(dbRef(db, `users/${uid}/teranove`))
+
+  if (!snapshot.exists()) {
     router.push('/home')
     return
   }
@@ -63,6 +112,10 @@ function typeEffect() {
 
 onMounted(() => {
   typeEffect()
+
+  onAuthStateChanged(auth, (currentUser) => {
+    user.value = currentUser
+  })
 })
 </script>
 
@@ -118,11 +171,55 @@ onMounted(() => {
 }
 
 .subtitle {
-  margin: 20px 0 46px;
+  margin: 20px 0 28px;
   color: #d8e0ea;
   font-size: 17px;
   letter-spacing: 0.08em;
   line-height: 1.7;
+}
+
+.loginBox {
+  width: min(360px, 100%);
+  margin: 0 auto 18px;
+}
+
+.googleButton,
+.logoutButton {
+  width: 100%;
+  padding: 13px 16px;
+
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: white;
+
+  cursor: pointer;
+  transition: 0.2s;
+  backdrop-filter: blur(10px);
+  letter-spacing: 0.12em;
+}
+
+.googleButton {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.logoutButton {
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+}
+
+.userBox {
+  padding: 12px;
+
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(10px);
+}
+
+.userText {
+  margin: 0;
+  color: #d8e0ea;
+  font-size: 13px;
+  letter-spacing: 0.06em;
 }
 
 .menu {
@@ -166,7 +263,9 @@ onMounted(() => {
 }
 
 .mainButton:hover,
-.subButton:hover {
+.subButton:hover,
+.googleButton:hover,
+.logoutButton:hover {
   transform: translateY(-2px);
   border-color: rgba(157, 198, 255, 0.7);
 }
